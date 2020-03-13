@@ -209,6 +209,77 @@ void print_detector_detections(FILE **fps, char *id, detection *dets, int total,
     }
 }
 
+void print_detections_thresh_yolo(FILE *fp, detection *dets, int total, int classes, float thresh)
+{
+    int i, j;
+    for(i = 0; i < total; ++i){
+        float xmin = dets[i].bbox.x - dets[i].bbox.w/2.;
+        float xmax = dets[i].bbox.x + dets[i].bbox.w/2.;
+        float ymin = dets[i].bbox.y - dets[i].bbox.h/2.;
+        float ymax = dets[i].bbox.y + dets[i].bbox.h/2.;       
+
+        if (xmin < 0) xmin = 0;
+        if (ymin < 0) ymin = 0;
+        if (xmax > 1) xmax = 1;
+        if (ymax > 1) ymax = 1;
+
+        float c_x = (xmin + xmax) / 2.;
+        float c_y = (ymin + ymax) / 2.;
+        float bw = xmax - xmin;
+        float bh = ymax - ymin;
+
+        float max_prop_obj = 0.;
+        int max_class = 0;
+        for(j = 0; j < classes; ++j) {
+            if (dets[i].prob[j] > max_prop_obj) {max_prop_obj = dets[i].prob[j]; max_class=j;}
+        }
+        if (max_prop_obj > thresh) {
+            fprintf(fp, "%d %f %f %f %f %f\n", max_class, max_prop_obj, c_x, c_y, bw, bh);
+        }
+    }
+}
+
+detection *print_max_detection_thresh_yolo(FILE *fp, detection *dets, int total, int classes, float thresh)
+{
+    int i, j, max_idx = 0;
+    float max_prop_obj = 0.;
+    int max_class = 0;
+    float max_cx = 0.0, max_cy = 0.0, max_bw = 0.0, max_bh = 0.0;
+    for(i = 0; i < total; ++i){
+        float xmin = dets[i].bbox.x - dets[i].bbox.w/2.;
+        float xmax = dets[i].bbox.x + dets[i].bbox.w/2.;
+        float ymin = dets[i].bbox.y - dets[i].bbox.h/2.;
+        float ymax = dets[i].bbox.y + dets[i].bbox.h/2.;       
+
+        if (xmin < 0) xmin = 0;
+        if (ymin < 0) ymin = 0;
+        if (xmax > 1) xmax = 1;
+        if (ymax > 1) ymax = 1;
+
+        float cx = (xmin + xmax) / 2.;
+        float cy = (ymin + ymax) / 2.;
+        float bw = xmax - xmin;
+        float bh = ymax - ymin;
+
+        for(j = 0; j < classes; ++j) {
+            if (dets[i].prob[j] > max_prop_obj) {
+                max_prop_obj = dets[i].prob[j];
+                max_class = j;
+                max_cx = cx;
+                max_cy = cy;
+                max_bw = bw;
+                max_bh = bh;
+                max_idx = i;
+            }
+        }
+    }
+    if (max_prop_obj > thresh) {
+        fprintf(fp, "%d %f %f %f %f %f\n", max_class, max_prop_obj, max_cx, max_cy, max_bw, max_bh);
+        return &(dets[max_idx]);
+    }
+    return NULL;
+}
+
 void print_imagenet_detections(FILE *fp, int id, detection *dets, int total, int classes, int w, int h)
 {
     int i, j;
@@ -559,7 +630,7 @@ void validate_detector_recall(char *cfgfile, char *weightfile)
 }
 
 
-void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filename, float thresh, float hier_thresh, char *outfile, int fullscreen)
+void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filename, float thresh, float hier_thresh, char *outfile, int fullscreen, char *outdir)
 {
     list *options = read_data_cfg(datacfg);
     char *name_list = option_find_str(options, "names", "data/names.list");
@@ -601,19 +672,50 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
         //printf("%d\n", nboxes);
         //if (nms) do_nms_obj(boxes, probs, l.w*l.h*l.n, l.classes, nms);
         if (nms) do_nms_sort(dets, nboxes, l.classes, nms);
-        draw_detections(im, dets, nboxes, thresh, names, alphabet, l.classes);
-        free_detections(dets, nboxes);
-        if(outfile){
-            save_image(im, outfile);
-        }
-        else{
-            save_image(im, "predictions");
-#ifdef OPENCV
-            make_window("predictions", 512, 512, 0);
-            show_image(im, "predictions", 0);
-#endif
-        }
+        if(outdir) {
+            /* Print detections to txt */
+            char detect_outfile[2048];
+            char txt_filename[2048];
+            strcpy(detect_outfile, outdir);
+            strcat(detect_outfile, "/");
+            strcpy(txt_filename, input);
+            char *pos = strrchr(input, '/');
+            if (pos) {
+                strcpy(txt_filename, pos+1);
+                strcpy(&txt_filename[strlen(txt_filename)-3], "txt");
+            }
+            strcat(detect_outfile, txt_filename);
+            FILE *fp = fopen(detect_outfile, "w");
+            /* Print only the max detection */
+            detection *max_detection = print_max_detection_thresh_yolo(fp, dets, nboxes, l.classes, thresh);
+            // print_detections_thresh_yolo(fp, dets, nboxes, l.classes, thresh);
+            fclose(fp);
 
+            /* Draw max detection on image */
+            if (max_detection) {
+                char img_filename[2048];
+                strcpy(img_filename, outdir);
+                strcat(img_filename, "/");
+                pos = strrchr(input, '/');
+                strcat(img_filename, pos+1);
+                draw_detections(im, max_detection, 1, thresh, names, alphabet, l.classes);
+                // draw_detections(im, dets, 1, thresh, names, alphabet, l.classes);
+                save_image(im, img_filename);
+            }
+        } else {
+            draw_detections(im, dets, nboxes, thresh, names, alphabet, l.classes);
+            if(outfile){
+                save_image(im, outfile);
+            }
+            else{
+                save_image(im, "predictions");
+    #ifdef OPENCV
+                make_window("predictions", 512, 512, 0);
+                show_image(im, "predictions", 0);
+    #endif
+            }
+        }
+        free_detections(dets, nboxes);
         free_image(im);
         free_image(sized);
         if (filename) break;
@@ -800,6 +902,7 @@ void run_detector(int argc, char **argv)
     }
     char *gpu_list = find_char_arg(argc, argv, "-gpus", 0);
     char *outfile = find_char_arg(argc, argv, "-out", 0);
+    char *outdir = find_char_arg(argc, argv, "-outdir", 0);
     int *gpus = 0;
     int gpu = 0;
     int ngpus = 0;
@@ -833,7 +936,7 @@ void run_detector(int argc, char **argv)
     char *cfg = argv[4];
     char *weights = (argc > 5) ? argv[5] : 0;
     char *filename = (argc > 6) ? argv[6]: 0;
-    if(0==strcmp(argv[2], "test")) test_detector(datacfg, cfg, weights, filename, thresh, hier_thresh, outfile, fullscreen);
+    if(0==strcmp(argv[2], "test")) test_detector(datacfg, cfg, weights, filename, thresh, hier_thresh, outfile, fullscreen, outdir);
     else if(0==strcmp(argv[2], "train")) train_detector(datacfg, cfg, weights, gpus, ngpus, clear);
     else if(0==strcmp(argv[2], "valid")) validate_detector(datacfg, cfg, weights, outfile);
     else if(0==strcmp(argv[2], "valid2")) validate_detector_flip(datacfg, cfg, weights, outfile);
