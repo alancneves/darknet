@@ -78,6 +78,36 @@ void *open_video_stream(const char *f, int c, int w, int h, int fps)
     return (void *) cap;
 }
 
+void *write_video_stream(const char *f, int w, int h, int fps)
+{
+    VideoWriter *cap;
+    if(!f) return NULL;
+
+    cap = new VideoWriter();
+    int codec = CV_FOURCC('M', 'J', 'P', 'G');
+    cap->open(f, codec, fps, Size(w,h), true);
+
+    if(!cap->isOpened()) return 0;
+    return (void *) cap;
+}
+
+void save_frame_to_video(void *cap, image im)
+{
+    Mat m = image_to_mat(im);
+    ((VideoWriter *)cap)->write(m);
+}
+
+Size get_image_sz(image im)
+{
+    Mat m = image_to_mat(im);
+    return m.size();
+}
+
+int get_video_fps(void *cap)
+{
+    return (int)((VideoCapture *)cap)->get(CV_CAP_PROP_FPS);
+}
+
 image get_image_from_stream(void *p)
 {
     VideoCapture *cap = (VideoCapture *)p;

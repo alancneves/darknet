@@ -26,6 +26,7 @@ static float fps = 0;
 static float demo_thresh = 0;
 static float demo_hier = .5;
 static int running = 0;
+static FILE *output_file_dets;
 
 static int demo_frame = 3;
 static int demo_index = 0;
@@ -34,6 +35,7 @@ static float *avg;
 static int demo_done = 0;
 static int demo_total = 0;
 double demo_time;
+static int frame_counter = 0;
 
 detection *get_network_boxes(network *net, int w, int h, float thresh, float hier, int *map, int relative, int *num);
 
@@ -84,6 +86,7 @@ detection *avg_predictions(network *net, int *nboxes)
 
 void *detect_in_thread(void *ptr)
 {
+    ++frame_counter;
     running = 1;
     float nms = .4;
 
@@ -130,6 +133,20 @@ void *detect_in_thread(void *ptr)
     printf("Objects:\n\n");
     image display = buff[(buff_index+2) % 3];
     draw_detections(display, dets, nboxes, demo_thresh, demo_names, demo_alphabet, demo_classes);
+    /* Number of detected boxes and the bboxes*/
+    int i,j,nboxes_thresh=0;
+    for(i = 0; i < nboxes; ++i) {
+        for(j = 0; j < l.classes; ++j) {
+            if(dets[i].prob[j] > demo_thresh) {
+                nboxes_thresh++;
+            }
+        }
+    }
+    if (nboxes_thresh > 0)
+    {
+        fprintf(output_file_dets, "%d %d\n", nboxes_thresh, frame_counter);
+        print_detector_thresh(output_file_dets, dets, nboxes, l.classes, buff[0].w, buff[0].h, demo_thresh);
+    }
     free_detections(dets, nboxes);
 
     demo_index = (demo_index + 1)%demo_frame;
@@ -184,7 +201,7 @@ void *detect_loop(void *ptr)
     }
 }
 
-void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const char *filename, char **names, int classes, int delay, char *prefix, int avg_frames, float hier, int w, int h, int frames, int fullscreen)
+void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const char *filename, const char *out_filename, char **names, int classes, int delay, char *prefix, int avg_frames, float hier, int w, int h, int frames, int fullscreen, int display)
 {
     //demo_frame = avg_frames;
     image **alphabet = load_alphabet();
@@ -215,8 +232,7 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
     }else{
         cap = open_video_stream(0, cam_index, w, h, frames);
     }
-
-    if(!cap) error("Couldn't connect to webcam.\n");
+    if(!cap) error("Couldn't connect to webcam/video file.\n");
 
     buff[0] = get_image_from_stream(cap);
     buff[1] = copy_image(buff[0]);
@@ -224,6 +240,20 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
     buff_letter[0] = letterbox_image(buff[0], net->w, net->h);
     buff_letter[1] = letterbox_image(buff[0], net->w, net->h);
     buff_letter[2] = letterbox_image(buff[0], net->w, net->h);
+
+    /* Create a VideoWritter to record the detection */
+    void *cap_o = NULL;
+    char out_filename_txt[4096];
+    if(out_filename){
+        printf("Detections being recorded into: %s\n", out_filename);
+        int fps = get_video_fps(cap);
+        cap_o = (void *)write_video_stream(out_filename, buff[0].w, buff[1].h, fps);
+        int ext_pos = strrchr(out_filename,'.') - out_filename;
+        strncpy(out_filename_txt, out_filename, ext_pos);
+        strcat(out_filename_txt, ".txt");
+        output_file_dets = fopen(out_filename_txt, "w");
+    }
+    if(out_filename && !cap_o) error("Couldn't write to specified file.\n");
 
     int count = 0;
     if(!prefix){
@@ -239,16 +269,22 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
         if(!prefix){
             fps = 1./(what_time_is_it_now() - demo_time);
             demo_time = what_time_is_it_now();
-            display_in_thread(0);
+            if (display) {
+                display_in_thread(0);
+            }
         }else{
             char name[256];
             sprintf(name, "%s_%08d", prefix, count);
             save_image(buff[(buff_index + 1)%3], name);
         }
+        if(cap_o) {
+            save_frame_to_video(cap_o, buff[(buff_index + 1)%3]);
+        }
         pthread_join(fetch_thread, 0);
         pthread_join(detect_thread, 0);
         ++count;
     }
+    if(output_file_dets) fclose(output_file_dets);
 }
 
 /*

@@ -209,6 +209,33 @@ void print_detector_detections(FILE **fps, char *id, detection *dets, int total,
     }
 }
 
+
+int print_detector_thresh(FILE *fp, detection *dets, int total, int classes, int w, int h, float thresh)
+{   
+    if (!fp) return;
+    int i=0, j=0;
+    for(i = 0; i < total; ++i){
+        box b = dets[i].bbox;
+        int xmin = (b.x-b.w/2.)*w;
+        int xmax = (b.x+b.w/2.)*w;
+        int ymin = (b.y-b.h/2.)*h;
+        int ymax = (b.y+b.h/2.)*h;
+
+        if (xmin < 1) xmin = 1;
+        if (ymin < 1) ymin = 1;
+        if (xmax > w) xmax = w;
+        if (ymax > h) ymax = h;
+
+        for(j = 0; j < classes; ++j){
+            if (dets[i].prob[j] > thresh)
+            {
+                fprintf(fp, "%d %f %d %d %d %d\n", j, dets[i].prob[j], (int)xmin, (int)(ymin), (int)(xmax), (int)(ymax));
+            }
+        }
+    }
+}
+
+
 void print_detections_thresh_yolo(FILE *fp, detection *dets, int total, int classes, float thresh)
 {
     int i, j;
@@ -231,11 +258,12 @@ void print_detections_thresh_yolo(FILE *fp, detection *dets, int total, int clas
         float max_prop_obj = 0.;
         int max_class = 0;
         for(j = 0; j < classes; ++j) {
-            if (dets[i].prob[j] > max_prop_obj) {max_prop_obj = dets[i].prob[j]; max_class=j;}
+            //if (dets[i].prob[j] > max_prop_obj) {max_prop_obj = dets[i].prob[j]; max_class=j;}
+            if (dets[i].prob[j] > thresh) {fprintf(fp, "%d %f %f %f %f %f\n", max_class, max_prop_obj, c_x, c_y, bw, bh);}
         }
-        if (max_prop_obj > thresh) {
-            fprintf(fp, "%d %f %f %f %f %f\n", max_class, max_prop_obj, c_x, c_y, bw, bh);
-        }
+        // if (max_prop_obj > thresh) {
+        //     fprintf(fp, "%d %f %f %f %f %f\n", max_class, max_prop_obj, c_x, c_y, bw, bh);
+        // }
     }
 }
 
@@ -643,7 +671,7 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
     double time;
     char buff[256];
     char *input = buff;
-    float nms=.45;
+    float nms=.5;
     while(1){
         if(filename){
             strncpy(input, filename, 256);
@@ -669,7 +697,7 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
         printf("%s: Predicted in %f seconds.\n", input, what_time_is_it_now()-time);
         int nboxes = 0;
         detection *dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, 0, 1, &nboxes);
-        //printf("%d\n", nboxes);
+        // printf("%d\n", nboxes);
         //if (nms) do_nms_obj(boxes, probs, l.w*l.h*l.n, l.classes, nms);
         if (nms) do_nms_sort(dets, nboxes, l.classes, nms);
         if(outdir) {
@@ -687,18 +715,19 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
             strcat(detect_outfile, txt_filename);
             FILE *fp = fopen(detect_outfile, "w");
             /* Print only the max detection */
-            detection *max_detection = print_max_detection_thresh_yolo(fp, dets, nboxes, l.classes, thresh);
+            print_detections_thresh_yolo(fp, dets, nboxes, l.classes, thresh);
+            //detection *max_detection = print_max_detection_thresh_yolo(fp, dets, nboxes, l.classes, thresh);
             // print_detections_thresh_yolo(fp, dets, nboxes, l.classes, thresh);
             fclose(fp);
 
             /* Draw max detection on image */
-            if (max_detection) {
+            if (nboxes) {
                 char img_filename[2048];
                 strcpy(img_filename, outdir);
                 strcat(img_filename, "/");
                 pos = strrchr(input, '/');
                 strcat(img_filename, pos+1);
-                draw_detections(im, max_detection, 1, thresh, names, alphabet, l.classes);
+                draw_detections(im, dets, 1, thresh, names, alphabet, l.classes);
                 // draw_detections(im, dets, 1, thresh, names, alphabet, l.classes);
                 save_image(im, img_filename);
             }
@@ -931,6 +960,7 @@ void run_detector(int argc, char **argv)
     int height = find_int_arg(argc, argv, "-h", 0);
     int fps = find_int_arg(argc, argv, "-fps", 0);
     //int class = find_int_arg(argc, argv, "-class", 0);
+    int display = find_int_arg(argc, argv, "-display", 0);
 
     char *datacfg = argv[3];
     char *cfg = argv[4];
@@ -946,7 +976,7 @@ void run_detector(int argc, char **argv)
         int classes = option_find_int(options, "classes", 20);
         char *name_list = option_find_str(options, "names", "data/names.list");
         char **names = get_labels(name_list);
-        demo(cfg, weights, thresh, cam_index, filename, names, classes, frame_skip, prefix, avg, hier_thresh, width, height, fps, fullscreen);
+        demo(cfg, weights, thresh, cam_index, filename, outfile, names, classes, frame_skip, prefix, avg, hier_thresh, width, height, fps, fullscreen, display);
     }
     //else if(0==strcmp(argv[2], "extract")) extract_detector(datacfg, cfg, weights, cam_index, filename, class, thresh, frame_skip);
     //else if(0==strcmp(argv[2], "censor")) censor_detector(datacfg, cfg, weights, cam_index, filename, class, thresh, frame_skip);
